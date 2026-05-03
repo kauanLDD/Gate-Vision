@@ -36,11 +36,7 @@ const APP = {
   charts:              { timeline: null, distribution: null },
   dashboardFilterDays: 7,
   _dashboardCache:     null,
-  webcamStream:        null,
-  webcamDetectTimer:   null,
-  ocrInFlight:         false,
-  detectInFlight:      false,
-  lastProcessedPlate:  null
+  webcamStream:        null
 }
 
 // ── Utilidades ────────────────────────────────────────────────
@@ -253,14 +249,8 @@ function renderNav() {
 
 // ── Monitor de Placas ─────────────────────────────────────────
 
-async function detectPlate(placa, options = {}) {
+async function detectPlate(placa) {
   const clean = onlyPlate(placa)
-  if (clean.length < 7 || APP.detectInFlight) return
-  if (APP.lastProcessedPlate === clean && APP.lastDetection?.placa === clean) return
-
-  const autoOpen = options.autoOpen !== false
-  APP.detectInFlight = true
-  APP.lastProcessedPlate = clean
   APP.lastDetection = null
   APP.lastDecision  = null
 
@@ -293,26 +283,12 @@ async function detectPlate(placa, options = {}) {
     APP.lastDetection = { placa: clean, status: "nao-cadastrado", morador: null }
   }
 
-  try {
-    if (autoOpen && APP.lastDetection?.status === "autorizado") {
-      await openGateManual(true)
-    } else {
-      await renderView()
-    }
-  } finally {
-    APP.detectInFlight = false
-  }
+  await renderView()
 }
 
-async function detectPlateFromImage(file, options = {}) {
-  if (APP.ocrInFlight) return
-  APP.ocrInFlight = true
-  const fromWebcam = options.fromWebcam === true
-
-  if (!fromWebcam) {
-    APP.lastDetection = null
-    APP.lastDecision  = null
-  }
+async function detectPlateFromImage(file) {
+  APP.lastDetection = null
+  APP.lastDecision  = null
 
   try {
     const form = new FormData()
@@ -324,13 +300,9 @@ async function detectPlateFromImage(file, options = {}) {
     const json = await res.json()
 
     if (!json.placa) {
-      if (!fromWebcam) {
-        showToast("Nenhuma placa detectada na imagem.")
-      }
+      showToast("Nenhuma placa detectada na imagem.")
       APP.lastDetection = { placa: "---", status: "nao-detectado", morador: null }
-      if (!fromWebcam) {
-        await renderView()
-      }
+      await renderView()
       return
     }
 
@@ -338,18 +310,11 @@ async function detectPlateFromImage(file, options = {}) {
     const detectInput = document.getElementById("detectInput")
     if (detectInput) detectInput.value = clean
 
-    if (APP.webcamStream) stopWebcam()
     await detectPlate(clean)
   } catch (e) {
-    if (!fromWebcam) {
-      showToast("Erro ao processar imagem: " + e.message)
-    }
+    showToast("Erro ao processar imagem: " + e.message)
     console.error("detectPlateFromImage:", e)
-    if (!fromWebcam) {
-      await renderView()
-    }
-  } finally {
-    APP.ocrInFlight = false
+    await renderView()
   }
 }
 
@@ -373,22 +338,6 @@ function _webcamShowPlaceholder() {
   if (placeholder) { placeholder.style.display  = ""      }
 }
 
-function _syncWebcamUI() {
-  if (!APP.webcamStream) return
-  const video = document.getElementById("webcamVideo")
-  if (video) {
-    video.srcObject = APP.webcamStream
-  }
-  _webcamShowVideo()
-
-  const btnStart  = document.getElementById("btnStartWebcam")
-  const btnDetect = document.getElementById("btnDetectWebcam")
-  const btnStop   = document.getElementById("btnStopWebcam")
-  if (btnStart)  { btnStart.disabled = true }
-  if (btnDetect) { btnDetect.disabled = true; btnDetect.textContent = APP.detectInFlight ? "Detectando..." : "Captura automatica ativa" }
-  if (btnStop)   { btnStop.style.display = "" }
-}
-
 async function startWebcam() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     showToast("Seu navegador nao suporta acesso a webcam.")
@@ -408,13 +357,8 @@ async function startWebcam() {
     const btnDetect = document.getElementById("btnDetectWebcam")
     const btnStop   = document.getElementById("btnStopWebcam")
     if (btnStart)  { btnStart.disabled = true }
-    if (btnDetect) { btnDetect.disabled = true; btnDetect.textContent = "Captura automatica ativa" }
+    if (btnDetect) { btnDetect.disabled = false }
     if (btnStop)   { btnStop.style.display = "" }
-
-    if (APP.webcamDetectTimer) clearInterval(APP.webcamDetectTimer)
-    APP.webcamDetectTimer = setInterval(() => {
-      if (!APP.detectInFlight) captureAndDetectWebcam(true)
-    }, 2500)
   } catch (err) {
     const msg = err.name === "NotAllowedError"
       ? "Permissao de camera negada. Permita o acesso no navegador."
@@ -426,10 +370,6 @@ async function startWebcam() {
 }
 
 function stopWebcam() {
-  if (APP.webcamDetectTimer) {
-    clearInterval(APP.webcamDetectTimer)
-    APP.webcamDetectTimer = null
-  }
   if (APP.webcamStream) {
     APP.webcamStream.getTracks().forEach(t => t.stop())
     APP.webcamStream = null
@@ -443,17 +383,16 @@ function stopWebcam() {
   const btnDetect = document.getElementById("btnDetectWebcam")
   const btnStop   = document.getElementById("btnStopWebcam")
   if (btnStart)  { btnStart.disabled = false }
-  if (btnDetect) { btnDetect.disabled = true; btnDetect.textContent = "Deteccao automatica" }
+  if (btnDetect) { btnDetect.disabled = true }
   if (btnStop)   { btnStop.style.display = "none" }
 }
 
-async function captureAndDetectWebcam(silent = false) {
+async function captureAndDetectWebcam() {
   const video = document.getElementById("webcamVideo")
   if (!video || !APP.webcamStream) {
-    if (!silent) showToast("Webcam nao esta ativa.")
+    showToast("Webcam nao esta ativa.")
     return
   }
-  if (APP.detectInFlight || APP.ocrInFlight) return
   const canvas  = document.createElement("canvas")
   canvas.width  = video.videoWidth  || 640
   canvas.height = video.videoHeight || 480
@@ -463,19 +402,25 @@ async function captureAndDetectWebcam(silent = false) {
     if (!blob) { showToast("Erro ao capturar frame da webcam."); return }
     const file = new File([blob], "webcam_frame.jpg", { type: "image/jpeg" })
 
+    const preview     = document.getElementById("imgPreview")
+    const previewWrap = document.getElementById("imgPreviewWrap")
+    const webcamVideo = document.getElementById("webcamVideo")
+    if (preview && previewWrap) {
+      preview.src = URL.createObjectURL(file)
+      previewWrap.style.display = "block"
+    }
+    if (webcamVideo) { webcamVideo.style.display = "none" }
+
+    stopWebcam()
+
     const btnDetect = document.getElementById("btnDetectWebcam")
     if (btnDetect) { btnDetect.disabled = true; btnDetect.textContent = "Detectando..." }
 
-    await detectPlateFromImage(file, { fromWebcam: true })
-
-    if (APP.webcamStream) {
-      _webcamShowVideo()
-      if (btnDetect) btnDetect.textContent = "Captura automatica ativa"
-    }
+    await detectPlateFromImage(file)
   }, "image/jpeg", 0.92)
 }
 
-async function openGateManual(autoTriggered = false) {
+async function openGateManual() {
   if (!APP.lastDetection) return
   const placa = APP.lastDetection.placa
 
@@ -490,7 +435,7 @@ async function openGateManual(autoTriggered = false) {
     if (error) throw error
 
     APP.lastDecision = "liberado"
-    showToast(autoTriggered ? "Placa autorizada. Portao aberto automaticamente." : "Portao aberto pelo porteiro.", "ok")
+    showToast("Portao aberto pelo porteiro.", "ok")
   } catch (e) {
     showToast("Erro ao registrar abertura: " + e.message)
     console.error("openGateManual:", e)
@@ -581,7 +526,7 @@ async function renderDashboard() {
 
       <div class="dashboard-toolbar">
         <div>
-          <label class="login-sub">Periodo dos graficos</label>
+          <label class="login-sub">Periodo dos Relatórios</label>
           <select id="dashboardFilter" class="input">
             <option value="7"   ${String(APP.dashboardFilterDays) === "7"   ? "selected" : ""}>Ultimos 7 dias</option>
             <option value="15"  ${String(APP.dashboardFilterDays) === "15"  ? "selected" : ""}>Ultimos 15 dias</option>
@@ -1030,13 +975,16 @@ function renderMonitorPorteiro() {
               </div>
               <div class="monitor-toolbar" style="margin-top:12px;">
                 <input id="detectInput" class="input mono" placeholder="Ex: BRA2E24" maxlength="7">
+                <button id="btnDetect" class="btn primary">Identificar placa</button>
               </div>
               <div class="monitor-toolbar" style="margin-top:10px;">
                 <input type="file" id="imageInput" accept="image/*" style="display:none;">
                 <button id="btnUpload" class="btn">Enviar foto</button>
+                <button id="btnDetectImage" class="btn primary" disabled>Detectar na foto</button>
               </div>
               <div class="monitor-toolbar" style="margin-top:10px;">
                 <button id="btnStartWebcam" class="btn">Usar webcam</button>
+                <button id="btnDetectWebcam" class="btn primary" disabled>Detectar pela webcam</button>
                 <button id="btnStopWebcam" class="btn err" style="display:none;">Parar webcam</button>
               </div>
             </div>
@@ -1044,7 +992,7 @@ function renderMonitorPorteiro() {
 
           <div class="monitor-banner">
             <strong>Fluxo recomendado</strong>
-            <p class="section-sub">A validação acontece automaticamente quando a placa é reconhecida. Se estiver autorizada, o portão é aberto sem confirmação manual.</p>
+            <p class="section-sub">Primeiro capture a placa. Depois confira o morador identificado e finalize com liberação ou negação para registrar o evento no histórico.</p>
           </div>
         </div>
 
@@ -1394,7 +1342,6 @@ async function renderView() {
 
   vc.innerHTML = html
   bindViewActions()
-  if (APP.currentView === "monitor" && APP.webcamStream) _syncWebcamUI()
   if (APP.currentView === "dashboard") drawDashboardCharts()
 }
 
@@ -1585,31 +1532,18 @@ function bindViewActions() {
   // ── Monitor: detectar placa (manual)
   const detectBtn   = document.getElementById("btnDetect")
   const detectInput = document.getElementById("detectInput")
-  if (detectInput) {
-    detectInput.addEventListener("input", async () => {
-      detectInput.value = onlyPlate(detectInput.value)
-      if (detectInput.value.length === 7) {
-        if (detectBtn) {
-          detectBtn.disabled = true
-          detectBtn.textContent = "Validando..."
-        }
-        await detectPlate(detectInput.value)
-      } else {
-        APP.lastProcessedPlate = null
-      }
-    })
+  if (detectBtn && detectInput) {
+    detectInput.addEventListener("input", () => detectInput.value = onlyPlate(detectInput.value))
 
     const doDetect = async () => {
       const p = onlyPlate(detectInput.value)
       if (!p) { showToast("Digite uma placa para identificar."); return }
-      if (detectBtn) {
-        detectBtn.disabled    = true
-        detectBtn.textContent = "Verificando..."
-      }
+      detectBtn.disabled    = true
+      detectBtn.textContent = "Verificando..."
       await detectPlate(p)
     }
 
-    if (detectBtn) detectBtn.addEventListener("click", doDetect)
+    detectBtn.addEventListener("click", doDetect)
     detectInput.addEventListener("keydown", e => { if (e.key === "Enter") doDetect() })
   }
 
@@ -1617,16 +1551,13 @@ function bindViewActions() {
   const imageInput     = document.getElementById("imageInput")
   const btnUpload      = document.getElementById("btnUpload")
   const btnDetectImage = document.getElementById("btnDetectImage")
-  if (imageInput && btnUpload) {
+  if (imageInput && btnUpload && btnDetectImage) {
     btnUpload.addEventListener("click", () => imageInput.click())
 
-    imageInput.addEventListener("change", async () => {
+    imageInput.addEventListener("change", () => {
       const file = imageInput.files[0]
       if (!file) return
-      if (btnDetectImage) {
-        btnDetectImage.disabled = true
-        btnDetectImage.textContent = "Detectando..."
-      }
+      btnDetectImage.disabled = false
 
       const preview     = document.getElementById("imgPreview")
       const previewWrap = document.getElementById("imgPreviewWrap")
@@ -1636,6 +1567,13 @@ function bindViewActions() {
         previewWrap.style.display = "block"
         placeholder.style.display = "none"
       }
+    })
+
+    btnDetectImage.addEventListener("click", async () => {
+      const file = imageInput.files[0]
+      if (!file) { showToast("Selecione uma imagem primeiro."); return }
+      btnDetectImage.disabled    = true
+      btnDetectImage.textContent = "Detectando..."
       await detectPlateFromImage(file)
     })
   }

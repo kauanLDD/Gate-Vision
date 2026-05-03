@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const backendDir = path.join(rootDir, "backend");
+const backendPython = path.join(backendDir, ".venv", "Scripts", "python.exe");
 const frontendPort = 4173;
 const frontendUrl = `http://127.0.0.1:${frontendPort}`;
 const shouldOpenBrowser = !process.argv.includes("--no-open");
@@ -26,6 +27,22 @@ function openBrowser(url) {
   }).unref();
 }
 
+function runSetup(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: backendDir,
+    stdio: "inherit",
+    ...options
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    throw new Error(`Comando falhou: ${command} ${args.join(" ")}`);
+  }
+}
+
 function killProcessTree(processRef) {
   return new Promise((resolve) => {
     if (!processRef?.pid) {
@@ -42,22 +59,55 @@ function killProcessTree(processRef) {
   });
 }
 
-function startBackend() {
-  if (!fs.existsSync(path.join(backendDir, "start.bat"))) {
-    throw new Error("Arquivo backend/start.bat nao encontrado.");
-  }
+function watchProcess(name, processRef) {
+  processRef.on("error", (error) => {
+    if (shuttingDown) return;
+    console.error(`[dev] ${name} falhou ao iniciar: ${error.message}`);
+    void shutdown(`${name} error`);
+  });
 
-  backendProcess = spawn("cmd", ["/c", "start.bat"], {
-    cwd: backendDir,
-    stdio: "inherit"
+  processRef.on("exit", (code, signal) => {
+    if (shuttingDown) return;
+    const reason = signal ? `sinal ${signal}` : `codigo ${code}`;
+    log(`${name} finalizou com ${reason}.`);
+    void shutdown(`${name} exit`);
   });
 }
 
+function startBackend() {
+  if (!fs.existsSync(backendPython)) {
+    log("criando ambiente virtual do backend...");
+    runSetup("python", ["-m", "venv", ".venv"]);
+  }
+
+  const dotenvCheck = spawnSync(backendPython, ["-c", "import dotenv"], {
+    cwd: backendDir,
+    stdio: "ignore"
+  });
+
+  if (dotenvCheck.status !== 0) {
+    log("instalando dependencias do backend...");
+    runSetup(backendPython, ["-m", "pip", "install", "-r", "requirements.txt"]);
+  }
+
+  backendProcess = spawn(backendPython, ["server.py"], {
+    cwd: backendDir,
+    stdio: "inherit"
+  });
+  watchProcess("backend", backendProcess);
+}
+
 function startFrontend() {
-  frontendProcess = spawn("cmd", ["/c", "npm", "run", "dev:front", "--", "--host", "127.0.0.1", "--port", String(frontendPort)], {
+  const command = process.platform === "win32" ? "cmd" : "npm";
+  const args = process.platform === "win32"
+    ? ["/d", "/s", "/c", "npm", "run", "dev:front", "--", "--host", "127.0.0.1", "--port", String(frontendPort)]
+    : ["run", "dev:front", "--", "--host", "127.0.0.1", "--port", String(frontendPort)];
+
+  frontendProcess = spawn(command, args, {
     cwd: rootDir,
     stdio: "inherit"
   });
+  watchProcess("frontend", frontendProcess);
 }
 
 async function shutdown(signal = "encerramento") {
@@ -76,7 +126,7 @@ async function shutdown(signal = "encerramento") {
 process.on("SIGINT", () => { void shutdown("SIGINT"); });
 process.on("SIGTERM", () => { void shutdown("SIGTERM"); });
 
-log("iniciando backend/start.bat...");
+log("iniciando backend FastAPI...");
 startBackend();
 log(`iniciando frontend React em ${frontendUrl}...`);
 startFrontend();
