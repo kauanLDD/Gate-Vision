@@ -10,7 +10,8 @@ function ResidentForm({ initialData, onSubmit, onClose, loading }) {
     apartamento: "",
     torre: "",
     placa: "",
-    veiculo: ""
+    modelo: "",
+    cor: ""
   });
 
   useEffect(() => {
@@ -20,7 +21,8 @@ function ResidentForm({ initialData, onSubmit, onClose, loading }) {
       apartamento: initialData?.apartamento && initialData.apartamento !== "-" ? initialData.apartamento : "",
       torre: initialData?.torre && initialData.torre !== "-" ? initialData.torre : "",
       placa: initialData?.placa && initialData.placa !== "-" ? initialData.placa : "",
-      veiculo: initialData?.veiculo && initialData.veiculo !== "-" ? initialData.veiculo : ""
+      modelo: initialData?.modelo && initialData.modelo !== "-" ? initialData.modelo : "",
+      cor: initialData?.cor && initialData.cor !== "-" ? initialData.cor : ""
     });
   }, [initialData]);
 
@@ -35,7 +37,8 @@ function ResidentForm({ initialData, onSubmit, onClose, loading }) {
       <div><label className="login-sub">Apartamento</label><input required className="input" value={form.apartamento} onChange={(event) => updateField("apartamento", event.target.value)} /></div>
       <div><label className="login-sub">Torre</label><input required className="input" value={form.torre} onChange={(event) => updateField("torre", event.target.value.toUpperCase())} /></div>
       <div><label className="login-sub">Placa</label><input required className="input mono" maxLength={7} value={form.placa} onChange={(event) => updateField("placa", onlyPlate(event.target.value))} /></div>
-      <div><label className="login-sub">Veiculo</label><input className="input" value={form.veiculo} onChange={(event) => updateField("veiculo", event.target.value)} /></div>
+      <div><label className="login-sub">Modelo do veiculo</label><input className="input" value={form.modelo} onChange={(event) => updateField("modelo", event.target.value)} /></div>
+      <div><label className="login-sub">Cor do veiculo</label><input className="input" value={form.cor} onChange={(event) => updateField("cor", event.target.value)} /></div>
       <div className="form-actions modal-actions">
         <button className="btn primary" type="submit" disabled={loading}>{loading ? "Salvando..." : "Salvar Cadastro"}</button>
         <button className="btn" type="button" onClick={onClose}>Cancelar</button>
@@ -51,7 +54,7 @@ function ResidentsTable({ residents, readOnly, onDelete, onEdit }) {
     <table>
       <thead>
         <tr>
-          <th>Nome</th><th>CPF</th><th>Apto</th><th>Torre</th><th>Placa</th><th>Veiculo</th><th>Vaga</th>{!readOnly ? <th>Acoes</th> : null}
+          <th>Nome</th><th>CPF</th><th>Apto</th><th>Torre</th><th>Placa</th><th>Modelo</th><th>Cor</th><th>Vaga</th>{!readOnly ? <th>Acoes</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -62,7 +65,8 @@ function ResidentsTable({ residents, readOnly, onDelete, onEdit }) {
             <td>{resident.apartamento}</td>
             <td>{resident.torre}</td>
             <td className="mono">{resident.placa}</td>
-            <td>{resident.veiculo || "-"}</td>
+            <td>{resident.modelo || "-"}</td>
+            <td>{resident.cor || "-"}</td>
             <td>-</td>
             {!readOnly ? (
               <td>

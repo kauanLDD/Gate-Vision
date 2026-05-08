@@ -77,7 +77,7 @@ export default function App() {
   let content = null;
   if (currentView === "dashboard") content = <DashboardView filterDays={dashboardFilterDays} onFilterChange={setDashboardFilterDays} onError={pushToast} />;
   else if (currentView === "cadastro") content = <ResidentsView onToast={pushToast} />;
-  else if (currentView === "cameras") content = <CamerasView onToast={pushToast} />;
+  else if (currentView === "cameras") content = <CamerasView backendUrl={backendUrl} onToast={pushToast} />;
   else if (currentView === "autorizacoes") content = <AuthorizationsView onToast={pushToast} />;
   else if (currentView === "monitor") content = <MonitorView backendUrl={backendUrl} onToast={pushToast} />;
   else if (currentView === "residentes") content = <ResidentsView readOnly onToast={pushToast} />;

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   detectPlateFromBackend,
+  fetchCameras,
+  connectArduinoPort,
   lookupAuthorizedPlate,
   registerAccessDenied,
   registerAccessOpen,
@@ -25,15 +27,19 @@ function statusImage(detection, decision) {
 
 export default function MonitorView({ backendUrl, onToast }) {
   const [detection, setDetection] = useState(null);
+  const [lastValidatedDetection, setLastValidatedDetection] = useState(null);
   const [decision, setDecision] = useState(null);
   const [manualPlate, setManualPlate] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [webcamActive, setWebcamActive] = useState(false);
   const [processingLabel, setProcessingLabel] = useState("");
+  const [systemCameras, setSystemCameras] = useState([]);
+  const [selectedSystemCameraId, setSelectedSystemCameraId] = useState("");
   const [cameraDevices, setCameraDevices] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
   const videoRef = useRef(null);
+  const fileInputRef = useRef(null);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
   const detectInFlightRef = useRef(false);
@@ -61,6 +67,10 @@ export default function MonitorView({ backendUrl, onToast }) {
     navigator.mediaDevices.addEventListener?.("devicechange", handleDeviceChange);
     return () => navigator.mediaDevices.removeEventListener?.("devicechange", handleDeviceChange);
   }, []);
+
+  useEffect(() => {
+    void loadSystemCameras();
+  }, [backendUrl]);
 
   useEffect(() => () => {
     if (resetTimerRef.current) {
@@ -93,6 +103,21 @@ export default function MonitorView({ backendUrl, onToast }) {
     } catch (error) {
       console.warn("Falha ao listar cameras:", error);
       return [];
+    }
+  }
+
+  async function loadSystemCameras(preferredCameraId = null) {
+    try {
+      const cameras = await fetchCameras();
+      setSystemCameras(cameras);
+      setSelectedSystemCameraId((current) => {
+        if (preferredCameraId && cameras.some((camera) => String(camera.id) === String(preferredCameraId))) return String(preferredCameraId);
+        if (current && cameras.some((camera) => String(camera.id) === String(current))) return current;
+        return cameras[0] ? String(cameras[0].id) : "";
+      });
+    } catch (error) {
+      console.warn("Falha ao carregar cameras operacionais:", error);
+      setSystemCameras([]);
     }
   }
 
@@ -175,15 +200,20 @@ export default function MonitorView({ backendUrl, onToast }) {
 
   async function openGate(detected, autoTriggered = false) {
     if (!detected) return;
-    await registerAccessOpen(detected.placa);
+    const activeSystemCamera = systemCameras.find((camera) => String(camera.id) === String(selectedSystemCameraId));
+    if (!activeSystemCamera) {
+      throw new Error("Selecione a camera operacional vinculada ao portao.");
+    }
+    if (!activeSystemCamera.gate_usb_port) {
+      throw new Error("A camera selecionada nao possui um portao USB associado na aba de cameras.");
+    }
+
+    await connectArduinoPort(backendUrl, activeSystemCamera.gate_usb_port, activeSystemCamera.gate_baud || 9600);
+    await triggerGate(backendUrl);
+    await registerAccessOpen(detected.placa, Number.parseInt(activeSystemCamera.id, 10) || 1);
     setDecision("liberado");
     scheduleMonitorReset();
     onToast(autoTriggered ? "Placa autorizada. Portao aberto automaticamente." : "Portao aberto pelo porteiro.", "ok");
-    try {
-      await triggerGate(backendUrl);
-    } catch (error) {
-      console.warn("open-gate indisponivel:", error);
-    }
   }
 
   async function processPlate(plate, autoOpen = true) {
@@ -199,11 +229,27 @@ export default function MonitorView({ backendUrl, onToast }) {
     try {
       const nextDetection = await lookupAuthorizedPlate(clean);
       setDetection(nextDetection);
+      setLastValidatedDetection(nextDetection);
       if (autoOpen && nextDetection.status === "autorizado") {
-        await openGate(nextDetection, true);
+        try {
+          await openGate(nextDetection, true);
+        } catch (error) {
+          onToast(error.message);
+        }
       }
     } catch (error) {
-      setDetection({ placa: clean, status: "nao-cadastrado", morador: null });
+      setDetection({
+        placa: clean,
+        status: "nao-cadastrado",
+        morador: null,
+        veiculo: { modelo: "-", cor: "-" }
+      });
+      setLastValidatedDetection({
+        placa: clean,
+        status: "nao-cadastrado",
+        morador: null,
+        veiculo: { modelo: "-", cor: "-" }
+      });
       onToast(`Erro ao verificar placa: ${error.message}`);
     } finally {
       setProcessingLabel("");
@@ -224,7 +270,12 @@ export default function MonitorView({ backendUrl, onToast }) {
       const result = await detectPlateFromBackend(backendUrl, file);
       if (!result.placa) {
         if (!fromWebcam) {
-          setDetection({ placa: "---", status: "nao-detectado", morador: null });
+          setDetection({
+            placa: "---",
+            status: "nao-detectado",
+            morador: null,
+            veiculo: { modelo: "-", cor: "-" }
+          });
           onToast("Nenhuma placa detectada na imagem.");
         }
         return;
@@ -248,13 +299,14 @@ export default function MonitorView({ backendUrl, onToast }) {
     }
   }
 
-  async function startWebcam(cameraId = selectedCameraId) {
+  async function startWebcam(cameraIdOrEvent = selectedCameraId) {
     if (!navigator.mediaDevices?.getUserMedia) {
       onToast("Seu navegador nao suporta acesso a webcam.");
       return;
     }
 
     try {
+      const cameraId = typeof cameraIdOrEvent === "string" ? cameraIdOrEvent : selectedCameraId;
       let stream = null;
       let selectedCameraUnavailable = false;
 
@@ -368,6 +420,10 @@ export default function MonitorView({ backendUrl, onToast }) {
     await processImage(file, true);
   }
 
+  function handleSystemCameraChange(event) {
+    setSelectedSystemCameraId(event.target.value);
+  }
+
   async function handleManualOpen() {
     if (!detection) return;
     try {
@@ -380,7 +436,7 @@ export default function MonitorView({ backendUrl, onToast }) {
   async function handleDeny() {
     if (!detection) return;
     try {
-      await registerAccessDenied(detection.placa);
+      await registerAccessDenied(detection.placa, Number.parseInt(selectedSystemCameraId, 10) || 1);
       setDecision("negado");
       scheduleMonitorReset();
       onToast("Acesso negado registrado.", "ok");
@@ -405,6 +461,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(URL.createObjectURL(file));
     await processImage(file, false);
+    event.target.value = "";
   }
 
   async function handleCameraChange(event) {
@@ -418,6 +475,9 @@ export default function MonitorView({ backendUrl, onToast }) {
 
   const currentChip = statusChip(detection, decision);
   const currentImage = statusImage(detection, decision);
+  const currentSystemCamera = systemCameras.find((camera) => String(camera.id) === String(selectedSystemCameraId));
+  const latestPlate = lastValidatedDetection?.placa || "---";
+  const latestOwner = lastValidatedDetection?.morador?.nome || "Aguardando identificacao para exibir dados do morador.";
 
   return (
     <div className="page-stack">
@@ -432,15 +492,36 @@ export default function MonitorView({ backendUrl, onToast }) {
           <div className="hero-note">
             <div>
               <div className="eyebrow">Ultima placa</div>
-              <strong className="mono">{detection ? detection.placa : "---"}</strong>
+              <strong className="mono">{latestPlate}</strong>
             </div>
-            <p className="section-sub">{detection?.morador ? detection.morador.nome : "Aguardando identificacao para exibir dados do morador."}</p>
+            <p className="section-sub">{latestOwner}</p>
           </div>
         </div>
       </div>
 
       <div className="monitor-layout">
         <div className="monitor-tools">
+          <div className="card">
+            <div className="card-head">Camera operacional</div>
+            <div className="card-body">
+              <div className="monitor-toolbar" style={{ marginBottom: 12 }}>
+                <select className="input" value={selectedSystemCameraId} onChange={handleSystemCameraChange} disabled={!systemCameras.length}>
+                  <option value="">{systemCameras.length ? "Selecione a camera cadastrada" : "Nenhuma camera cadastrada"}</option>
+                  {systemCameras.map((camera) => (
+                    <option key={camera.id} value={camera.id}>{`${camera.nome} - ${camera.localizacao}`}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="status-box">
+                <div className="row"><span>Camera selecionada</span><strong>{currentSystemCamera?.nome || "-"}</strong></div>
+                <div className="row"><span>Localizacao</span><strong>{currentSystemCamera?.localizacao || "-"}</strong></div>
+                <div className="row"><span>Portao USB</span><strong className="mono">{currentSystemCamera?.gate_usb_port || "-"}</strong></div>
+                <div className="row"><span>Baud do portao</span><strong>{currentSystemCamera?.gate_baud || 9600}</strong></div>
+              </div>
+            </div>
+          </div>
+
           <div className="card">
             <div className="card-head">Captura e leitura</div>
             <div className="card-body">
@@ -459,6 +540,11 @@ export default function MonitorView({ backendUrl, onToast }) {
               </div>
 
               <div className="monitor-toolbar" style={{ marginTop: 10 }}>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} style={{ display: "none" }} />
+                <button className="btn" onClick={() => fileInputRef.current?.click()} type="button">Enviar foto</button>
+              </div>
+
+              <div className="monitor-toolbar" style={{ marginTop: 10 }}>
                 <select className="input" value={selectedCameraId} onChange={handleCameraChange} disabled={!cameraDevices.length}>
                   <option value="">{cameraDevices.length ? "Selecione uma camera" : "Nenhuma camera encontrada"}</option>
                   {cameraDevices.map((camera) => (
@@ -468,7 +554,7 @@ export default function MonitorView({ backendUrl, onToast }) {
               </div>
 
               <div className="monitor-toolbar" style={{ marginTop: 10 }}>
-                <button className="btn" onClick={startWebcam} type="button" disabled={webcamActive}>Usar webcam</button>
+                <button className="btn" onClick={() => { void startWebcam(); }} type="button" disabled={webcamActive}>Usar webcam</button>
                 <button className="btn err" onClick={stopWebcam} type="button" style={{ display: webcamActive ? "" : "none" }}>Parar webcam</button>
               </div>
 
@@ -489,9 +575,11 @@ export default function MonitorView({ backendUrl, onToast }) {
                 <div className="row"><span>Morador</span><strong>{detection?.morador ? detection.morador.nome : "-"}</strong></div>
                 <div className="row"><span>CPF</span><strong>{detection?.morador ? formatCPF(detection.morador.cpf) : "-"}</strong></div>
                 <div className="row"><span>Apartamento</span><strong>{detection?.morador ? `${detection.morador.apartamento} - Torre ${detection.morador.torre}` : "-"}</strong></div>
+                <div className="row"><span>Modelo</span><strong>{detection?.veiculo?.modelo || "-"}</strong></div>
+                <div className="row"><span>Cor</span><strong>{detection?.veiculo?.cor || "-"}</strong></div>
               </div>
               <div className="actions" style={{ marginTop: 12 }}>
-                <button className="btn ok" onClick={handleManualOpen} type="button" disabled={!detection || !!decision}>Abrir portao</button>
+                <button className="btn ok" onClick={handleManualOpen} type="button" disabled={!detection || detection.status !== "autorizado" || !currentSystemCamera?.gate_usb_port || !!decision}>Abrir portao</button>
                 <button className="btn err" onClick={handleDeny} type="button" disabled={!detection || !!decision}>Negar acesso</button>
               </div>
             </div>

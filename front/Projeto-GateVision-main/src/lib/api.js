@@ -1,6 +1,41 @@
 import { db, ESTAB_ID } from "./config";
 import { formatDateTime, getFilterDateISO, logStatus } from "./utils";
 
+const CAMERA_GATE_CONFIG_KEY = "gatevision_camera_gate_config_v1";
+
+function readCameraGateConfig() {
+  try {
+    const raw = localStorage.getItem(CAMERA_GATE_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCameraGateConfig(config) {
+  localStorage.setItem(CAMERA_GATE_CONFIG_KEY, JSON.stringify(config));
+}
+
+function getCameraGateConfig(cameraId) {
+  const config = readCameraGateConfig();
+  return config[String(cameraId)] || { gate_usb_port: "", gate_baud: 9600 };
+}
+
+function setCameraGateConfig(cameraId, payload) {
+  const config = readCameraGateConfig();
+  config[String(cameraId)] = {
+    gate_usb_port: payload.gate_usb_port || "",
+    gate_baud: Number.parseInt(payload.gate_baud, 10) || 9600
+  };
+  writeCameraGateConfig(config);
+}
+
+function removeCameraGateConfig(cameraId) {
+  const config = readCameraGateConfig();
+  delete config[String(cameraId)];
+  writeCameraGateConfig(config);
+}
+
 export async function loginUser(login, password) {
   const { data, error } = await db
     .from("usuarios_sistema")
@@ -52,7 +87,7 @@ export async function fetchDashboardData(filterDays) {
 export async function fetchResidents() {
   const [pessoasRes, veiculosRes, vinculosRes] = await Promise.all([
     db.from("pessoas").select("id, nome, cpf"),
-    db.from("veiculos").select("id, placa, modelo, pessoa_id"),
+    db.from("veiculos").select("id, placa, modelo, cor, pessoa_id"),
     db.from("vinculos").select("pessoa_id, unidades(identificacao, blocos(nome))")
   ]);
 
@@ -73,7 +108,8 @@ export async function fetchResidents() {
       torre: bloco?.nome || "-",
       veiculo_id: vehicle?.id || null,
       placa: vehicle?.placa || "-",
-      veiculo: vehicle?.modelo || "-"
+      modelo: vehicle?.modelo || "-",
+      cor: vehicle?.cor || "-"
     };
   });
 }
@@ -135,7 +171,8 @@ export async function saveResident(payload) {
 
   const vehicleRes = await db.from("veiculos").insert({
     placa: payload.placa,
-    modelo: payload.veiculo || null,
+    modelo: payload.modelo || null,
+    cor: payload.cor || null,
     pessoa_id: personId,
     tipo_veiculo_id: 1
   });
@@ -222,7 +259,8 @@ export async function updateResident(personId, payload) {
     const vehicleRes = await db.from("veiculos")
       .update({
         placa: payload.placa,
-        modelo: payload.veiculo || null,
+        modelo: payload.modelo || null,
+        cor: payload.cor || null,
         tipo_veiculo_id: 1
       })
       .eq("id", currentVehicleRes.data.id);
@@ -230,7 +268,8 @@ export async function updateResident(personId, payload) {
   } else {
     const vehicleRes = await db.from("veiculos").insert({
       placa: payload.placa,
-      modelo: payload.veiculo || null,
+      modelo: payload.modelo || null,
+      cor: payload.cor || null,
       pessoa_id: personId,
       tipo_veiculo_id: 1
     });
@@ -246,23 +285,36 @@ export async function fetchLogs() {
 
 export async function lookupAuthorizedPlate(plate) {
   const nowIso = new Date().toISOString();
-
-  const { data, error } = await db
-    .from("vw_placas_autorizadas")
-    .select("*")
+  const { data: vehicle, error: vehicleError } = await db
+    .from("veiculos")
+    .select("id, placa, modelo, cor, pessoa_id")
     .eq("placa", plate)
     .maybeSingle();
 
-  if (error) throw error;
-  if (data) {
+  if (vehicleError) throw vehicleError;
+  if (vehicle?.pessoa_id) {
+    const [personRes, vinculoRes] = await Promise.all([
+      db.from("pessoas").select("id, nome, cpf").eq("id", vehicle.pessoa_id).maybeSingle(),
+      db.from("vinculos").select("pessoa_id, unidades(identificacao, blocos(nome))").eq("pessoa_id", vehicle.pessoa_id).maybeSingle()
+    ]);
+
+    if (personRes.error) throw personRes.error;
+    if (vinculoRes.error) throw vinculoRes.error;
+
+    const unidade = vinculoRes.data?.unidades;
+    const bloco = unidade?.blocos;
     return {
       placa: plate,
       status: "autorizado",
       morador: {
-        nome: data.proprietario || "Morador",
-        cpf: "",
-        apartamento: data.unidade || "-",
-        torre: data.bloco || "-"
+        nome: personRes.data?.nome || "Morador",
+        cpf: personRes.data?.cpf || "",
+        apartamento: unidade?.identificacao || "-",
+        torre: bloco?.nome || "-"
+      },
+      veiculo: {
+        modelo: vehicle.modelo || "-",
+        cor: vehicle.cor || "-"
       }
     };
   }
@@ -288,11 +340,23 @@ export async function lookupAuthorizedPlate(plate) {
         cpf: "",
         apartamento: "Temporario",
         torre: formatDateTime(temporaryAuthorization.data_fim)
+      },
+      veiculo: {
+        modelo: "-",
+        cor: "-"
       }
     };
   }
 
-  return { placa: plate, status: "nao-cadastrado", morador: null };
+  return {
+    placa: plate,
+    status: "nao-cadastrado",
+    morador: null,
+    veiculo: {
+      modelo: "-",
+      cor: "-"
+    }
+  };
 }
 
 export async function detectPlateFromBackend(backendUrl, file) {
@@ -303,10 +367,44 @@ export async function detectPlateFromBackend(backendUrl, file) {
   return response.json();
 }
 
-export async function registerAccessOpen(plate) {
+async function parseBackendResponse(response) {
+  if (response.ok) return response.json();
+
+  let detail = `Servidor retornou ${response.status}`;
+  try {
+    const payload = await response.json();
+    if (payload?.detail) detail = payload.detail;
+  } catch {
+    // Mantem a mensagem padrao quando nao houver JSON valido.
+  }
+  throw new Error(detail);
+}
+
+export async function fetchArduinoState(backendUrl) {
+  const response = await fetch(`${backendUrl}/api/arduino`);
+  return parseBackendResponse(response);
+}
+
+export async function connectArduinoPort(backendUrl, port, baud = 9600) {
+  const response = await fetch(`${backendUrl}/api/arduino/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ port, baud })
+  });
+  return parseBackendResponse(response);
+}
+
+export async function disconnectArduinoPort(backendUrl) {
+  const response = await fetch(`${backendUrl}/api/arduino/disconnect`, {
+    method: "POST"
+  });
+  return parseBackendResponse(response);
+}
+
+export async function registerAccessOpen(plate, cameraId = 1) {
   const { error } = await db.rpc("registrar_acesso", {
     p_placa: plate,
-    p_camera_id: 1,
+    p_camera_id: cameraId,
     p_confianca: 100,
     p_imagem_url: null,
     p_tempo_ms: null
@@ -315,13 +413,14 @@ export async function registerAccessOpen(plate) {
 }
 
 export async function triggerGate(backendUrl) {
-  await fetch(`${backendUrl}/api/open-gate`, { method: "POST" });
+  const response = await fetch(`${backendUrl}/api/open-gate`, { method: "POST" });
+  return parseBackendResponse(response);
 }
 
-export async function registerAccessDenied(plate) {
+export async function registerAccessDenied(plate, cameraId = 1) {
   const { error } = await db.from("acessos").insert({
     placa_detectada: plate,
-    camera_id: 1,
+    camera_id: cameraId,
     autorizado: false,
     motivo_bloqueio: "Negado pelo porteiro",
     confianca: 100
@@ -342,23 +441,27 @@ export async function fetchCameras() {
     nome: camera.nome,
     localizacao: camera.localizacao || "-",
     tipo_camera_id: String(camera.tipo_camera_id || 1),
-    tipo: camera.tipos_camera?.descricao || "-"
+    tipo: camera.tipos_camera?.descricao || "-",
+    ...getCameraGateConfig(camera.id)
   }));
 }
 
 export async function saveCamera(payload) {
-  const { error } = await db.from("cameras").insert({
+  const { data, error } = await db.from("cameras").insert({
     nome: payload.nome,
     localizacao: payload.localizacao,
     tipo_camera_id: Number.parseInt(payload.tipo_camera_id, 10),
     estabelecimento_id: ESTAB_ID
-  });
+  }).select("id").single();
   if (error) throw error;
+  if (data?.id) setCameraGateConfig(data.id, payload);
+  return data;
 }
 
 export async function deleteCamera(cameraId) {
   const { error } = await db.from("cameras").update({ ativo: false }).eq("id", cameraId);
   if (error) throw error;
+  removeCameraGateConfig(cameraId);
 }
 
 export async function updateCamera(cameraId, payload) {
@@ -368,6 +471,7 @@ export async function updateCamera(cameraId, payload) {
     tipo_camera_id: Number.parseInt(payload.tipo_camera_id, 10)
   }).eq("id", cameraId);
   if (error) throw error;
+  setCameraGateConfig(cameraId, payload);
 }
 
 export async function fetchAuthorizations() {
