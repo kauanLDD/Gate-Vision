@@ -12,6 +12,13 @@ const CamerasView = lazy(() => import("./components/CamerasView"));
 const AuthorizationsView = lazy(() => import("./components/AuthorizationsView"));
 const MonitorView = lazy(() => import("./components/MonitorView"));
 const LogsView = lazy(() => import("./components/LogsView"));
+const THEME_STORAGE_KEY = "gateVisionTheme";
+
+function getInitialTheme() {
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
 
 function backendLabel(url) {
   const isLocal = url.includes("localhost");
@@ -24,11 +31,18 @@ export default function App() {
   const [dashboardFilterDays, setDashboardFilterDays] = useState("7");
   const [backendUrl, setBackendUrl] = useState(() => resolveBackendUrl());
   const [toasts, setToasts] = useState([]);
+  const [theme, setTheme] = useState(() => getInitialTheme());
 
   useEffect(() => {
     if (!currentUser) return;
     setCurrentView(currentUser.role === "admin" ? "dashboard" : "monitor");
   }, [currentUser]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   function pushToast(message, type = "err") {
     const toast = { id: `${Date.now()}-${Math.random()}`, message, type };
@@ -65,10 +79,14 @@ export default function App() {
     pushToast(`Backend atualizado para ${backendLabel(nextUrl)}.`, "ok");
   }
 
+  function toggleTheme() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
   if (!currentUser) {
     return (
       <>
-        <LoginScreen onLogin={handleLogin} />
+        <LoginScreen theme={theme} onThemeToggle={toggleTheme} onLogin={handleLogin} />
         <ToastViewport toasts={toasts} />
       </>
     );
@@ -92,6 +110,8 @@ export default function App() {
         onLogout={handleLogout}
         backendLabel={backendLabel(backendUrl)}
         onBackendClick={handleBackendClick}
+        theme={theme}
+        onThemeToggle={toggleTheme}
       >
         <Suspense fallback={<div className="empty">Carregando...</div>}>
           {content}
