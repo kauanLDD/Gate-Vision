@@ -115,13 +115,6 @@ export default function DashboardView({ filterDays, onFilterChange, onError }) {
               <span className="chip">{totalClientes} clientes cadastrados</span>
             </div>
           </div>
-          <div className="hero-note">
-            <div>
-              <div className="eyebrow">Taxa de aprovacao</div>
-              <strong>{percent}%</strong>
-            </div>
-            <p className="section-sub">Base calculada sobre {total} acessos avaliados no periodo filtrado.</p>
-          </div>
         </div>
       </div>
 

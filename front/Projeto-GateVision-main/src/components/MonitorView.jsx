@@ -47,6 +47,7 @@ export default function MonitorView({ backendUrl, onToast }) {
   const stableFrameCountRef = useRef(0);
   const resetTimerRef = useRef(null);
   const plateVoteBufferRef = useRef([]);
+  const autoStartAttemptedRef = useRef(false);
 
   useEffect(() => {
     if (videoRef.current && streamRef.current) {
@@ -66,6 +67,15 @@ export default function MonitorView({ backendUrl, onToast }) {
     navigator.mediaDevices.addEventListener?.("devicechange", handleDeviceChange);
     return () => navigator.mediaDevices.removeEventListener?.("devicechange", handleDeviceChange);
   }, []);
+
+  useEffect(() => {
+    if (webcamActive || streamRef.current || autoStartAttemptedRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    if (cameraDevices.length === 0 && selectedCameraId) return;
+
+    autoStartAttemptedRef.current = true;
+    void startWebcam(selectedCameraId);
+  }, [cameraDevices.length, selectedCameraId, webcamActive]);
 
   useEffect(() => () => {
     if (resetTimerRef.current) {
@@ -130,7 +140,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     setDecision(null);
     setManualPlate("");
     setPreviewUrl("");
-    setProcessingLabel("");
+    setProcessingLabel(webcamActive ? "Aguardando nova placa..." : "");
     resetProcessedPlate();
     resetStabilityTracking();
     resetVoteBuffer();
@@ -276,10 +286,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
         // Votos suficientes: confirma a placa
         resetVoteBuffer();
-        if (previewUrl) URL.revokeObjectURL(previewUrl);
-        setPreviewUrl(URL.createObjectURL(file));
         setManualPlate(clean);
-        stopWebcam();
         await processPlate(clean, true, ocrConf);
       } else {
         setManualPlate(clean);
@@ -293,6 +300,8 @@ export default function MonitorView({ backendUrl, onToast }) {
       ocrInFlightRef.current = false;
       if (!fromWebcam) {
         setProcessingLabel("");
+      } else if (!detectInFlightRef.current && webcamActive) {
+        setProcessingLabel("Aguardando nova placa...");
       }
       // Para webcam: processingLabel já foi definida dentro do try
       // (progresso de votos ou "Validando..." via processPlate).
@@ -366,6 +375,7 @@ export default function MonitorView({ backendUrl, onToast }) {
         }
       }, 350);
     } catch (error) {
+      autoStartAttemptedRef.current = false;
       setProcessingLabel("");
       const message = error.name === "NotAllowedError"
         ? "Permissao de camera negada. Permita o acesso no navegador."
@@ -516,11 +526,6 @@ export default function MonitorView({ backendUrl, onToast }) {
                     <option key={camera.id} value={camera.id}>{camera.label}</option>
                   ))}
                 </select>
-              </div>
-
-              <div className="monitor-toolbar" style={{ marginTop: 10 }}>
-                <button className="btn" onClick={startWebcam} type="button" disabled={webcamActive}>Usar webcam</button>
-                <button className="btn err" onClick={stopWebcam} type="button" style={{ display: webcamActive ? "" : "none" }}>Parar webcam</button>
               </div>
 
               {processingLabel ? <div className="empty" style={{ marginTop: 12 }}>{processingLabel}</div> : null}
