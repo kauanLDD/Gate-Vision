@@ -303,11 +303,12 @@ export async function detectPlateFromBackend(backendUrl, file) {
   return response.json();
 }
 
-export async function registerAccessOpen(plate) {
+export async function registerAccessOpen(plate, confiancaOcr = null) {
+  const confianca = confiancaOcr !== null ? Math.round(confiancaOcr * 100) : 100;
   const { error } = await db.rpc("registrar_acesso", {
     p_placa: plate,
     p_camera_id: 1,
-    p_confianca: 100,
+    p_confianca: confianca,
     p_imagem_url: null,
     p_tempo_ms: null
   });

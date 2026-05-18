@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,7 +25,19 @@ ARDUINO_PORT     = os.getenv("ARDUINO_PORT",            "COM5")
 ARDUINO_BAUD     = int(os.getenv("ARDUINO_BAUD",        "9600"))
 GATE_OPEN_SECONDS = float(os.getenv("GATE_OPEN_SECONDS", "5"))
 
-app = FastAPI(title="GateVision API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"Carregando modelo de placas : {MODEL_PLATES}")
+    print(f"Conf YOLO                   : {DETECT_CONF}")
+    print(f"imgsz                       : {DETECT_IMGSZ}")
+    load_models(MODEL_PLATES, conf=DETECT_CONF, imgsz=DETECT_IMGSZ)
+    print("Modelos carregados com sucesso.")
+    conectar_arduino(ARDUINO_PORT, ARDUINO_BAUD)
+    yield
+    fechar_arduino()
+
+
+app = FastAPI(title="GateVision API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,21 +45,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup():
-    print(f"Carregando modelo de placas : {MODEL_PLATES}")
-    print(f"Conf YOLO                   : {DETECT_CONF}")
-    print(f"imgsz                       : {DETECT_IMGSZ}")
-    load_models(MODEL_PLATES, conf=DETECT_CONF, imgsz=DETECT_IMGSZ)
-    print("Modelos carregados com sucesso.")
-    conectar_arduino(ARDUINO_PORT, ARDUINO_BAUD)
-
-
-@app.on_event("shutdown")
-def shutdown():
-    fechar_arduino()
 
 
 @app.get("/")
@@ -62,15 +61,26 @@ async def detect_plate(file: UploadFile = File(...)):
     image_bytes = await file.read()
     result = detect(image_bytes, debug=False)
 
-    placa     = result.get("placa")
-    confianca = result.get("confianca", 0)
+    placa         = result.get("placa")
+    confianca     = result.get("confianca", 0)
+    confianca_ocr = result.get("confianca_ocr", 0)
 
     if placa:
-        print(f"[GateVision] Placa detectada : {placa}  (confianca YOLO: {confianca:.2%})")
+        print(
+            f"[GateVision] Placa detectada : {placa}"
+            f"  (YOLO: {confianca:.2%}  OCR: {confianca_ocr:.2%})"
+        )
     else:
         print("[GateVision] Nenhuma placa detectada na imagem.")
 
-    return {"placa": placa, "confianca": confianca}
+    return {
+        "placa":          placa,
+        "confianca":      confianca,
+        "confianca_yolo": result.get("confianca_yolo", confianca),
+        "confianca_ocr":  confianca_ocr,
+        "score_ocr":      result.get("score_ocr", 0),
+        "candidatos":     result.get("candidatos", []),
+    }
 
 
 @app.post("/api/open-gate")

@@ -251,11 +251,18 @@ def _score(text: str) -> int:
     return s
 
 
-def _extract_candidates(ocr_hits: list[tuple[str, float]]) -> list[tuple[str, int]]:
+def _extract_candidates(ocr_hits: list[tuple[str, float]]) -> list[tuple[str, int, float]]:
+    """Retorna lista de (texto, score, confianca_ocr) ordenada por score desc.
+
+    confianca_ocr é a confiança EasyOCR que sustentou o candidato vencedor:
+    - via hit direto: confiança do segmento reconhecido
+    - via janela de caracteres: média das confianças dos 7 caracteres da janela
+    """
     if not ocr_hits:
         return []
 
     candidates: dict[str, int] = {}
+    ocr_confs: dict[str, float] = {}
 
     for text, conf in ocr_hits:
         if 4 <= len(text) <= 10:
@@ -263,6 +270,7 @@ def _extract_candidates(ocr_hits: list[tuple[str, float]]) -> list[tuple[str, in
             sc = _score(corrected) + int(conf * 60)
             if corrected not in candidates or sc > candidates[corrected]:
                 candidates[corrected] = sc
+                ocr_confs[corrected] = conf
 
     conf_map: list[tuple[str, float]] = []
     for text, conf in ocr_hits:
@@ -279,8 +287,13 @@ def _extract_candidates(ocr_hits: list[tuple[str, float]]) -> list[tuple[str, in
         sc = _score(corrected) + int(avg_conf * 30)
         if corrected not in candidates or sc > candidates[corrected]:
             candidates[corrected] = sc
+            ocr_confs[corrected] = avg_conf
 
-    return sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+    return sorted(
+        [(text, score, round(ocr_confs.get(text, 0.0), 4))
+         for text, score in candidates.items()],
+        key=lambda x: x[1], reverse=True,
+    )
 
 
 # ── OCR com parada antecipada (variante a variante) ────────────
@@ -365,10 +378,21 @@ def _run_yolo_robust(img: np.ndarray) -> list[tuple]:
 
 def _process_detections(detections: list[tuple], img: np.ndarray,
                          debug_info: dict | None, timings: dict | None
-                         ) -> tuple[str | None, float]:
-    """Itera pelas detecções YOLO, roda OCR e devolve (melhor_placa, conf_yolo)."""
+                         ) -> dict:
+    """Itera pelas detecções YOLO, roda OCR e devolve resultado da melhor placa.
+
+    Retorna dict com:
+      placa          — texto detectado ou None
+      confianca_yolo — confiança da caixa YOLO
+      confianca_ocr  — confiança EasyOCR do melhor candidato (0-1)
+      score_ocr      — pontuação heurística (formato + contribuição OCR)
+      candidatos     — top 3 candidatos como lista de dicts serializáveis
+    """
     best_plate = None
-    best_conf = 0.0
+    best_conf_yolo = 0.0
+    best_ocr_conf = 0.0
+    best_score = 0
+    best_candidates_json: list[dict] = []
 
     sorted_dets = sorted(detections, key=lambda x: float(x[1].conf[0]), reverse=True)
 
@@ -385,8 +409,9 @@ def _process_detections(detections: list[tuple], img: np.ndarray,
                 round((time.perf_counter() - t_ocr) * 1000, 1))
 
         candidates = _extract_candidates(all_hits)
-        top_text  = candidates[0][0] if candidates else None
-        top_score = candidates[0][1] if candidates else -999
+        top_text     = candidates[0][0] if candidates else None
+        top_score    = candidates[0][1] if candidates else -999
+        top_ocr_conf = candidates[0][2] if candidates else 0.0
 
         if debug_info is not None:
             debug_info["detections"].append({
@@ -401,12 +426,24 @@ def _process_detections(detections: list[tuple], img: np.ndarray,
 
         if top_text and top_score > _score(best_plate or ""):
             best_plate = top_text
-            best_conf = plate_conf
+            best_conf_yolo = plate_conf
+            best_ocr_conf = top_ocr_conf
+            best_score = top_score
+            best_candidates_json = [
+                {"placa": t, "score": s, "confianca_ocr": c}
+                for t, s, c in candidates[:3]
+            ]
 
         if best_plate and _score(best_plate) >= _EARLY_STOP_SCORE:
             break
 
-    return best_plate, best_conf
+    return {
+        "placa": best_plate,
+        "confianca_yolo": round(best_conf_yolo, 4),
+        "confianca_ocr": round(best_ocr_conf, 4),
+        "score_ocr": best_score,
+        "candidatos": best_candidates_json,
+    }
 
 
 # ── Detecção principal ─────────────────────────────────────────
@@ -414,7 +451,14 @@ def _process_detections(detections: list[tuple], img: np.ndarray,
 def detect(image_bytes: bytes, debug: bool = False) -> dict:
     """Pipeline completo: pré-processamento → YOLO (rápido) → OCR Mercosul.
 
-    Retorna {"placa": str|None, "confianca": float, "debug": dict|None}.
+    Retorna:
+      placa          — texto da placa ou None
+      confianca      — alias de confianca_yolo (compatibilidade com versão anterior)
+      confianca_yolo — confiança da caixa YOLO (0-1)
+      confianca_ocr  — confiança EasyOCR do melhor candidato (0-1)
+      score_ocr      — pontuação heurística usada para ranquear (formato + OCR)
+      candidatos     — top 3 candidatos como lista de dicts {placa, score, confianca_ocr}
+      debug          — dados de diagnóstico quando debug=True, senão None
     """
     if _model_plates is None or _ocr_reader is None:
         raise RuntimeError("Modelos nao carregados. Chame load_models() primeiro.")
@@ -428,7 +472,11 @@ def detect(image_bytes: bytes, debug: bool = False) -> dict:
     timings["decode_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     if img is None:
-        return {"placa": None, "confianca": 0, "debug": None}
+        return {
+            "placa": None, "confianca": 0,
+            "confianca_yolo": 0, "confianca_ocr": 0,
+            "score_ocr": 0, "candidatos": [], "debug": None,
+        }
 
     t0 = time.perf_counter()
     enhanced = _enhance_full_image(img)
@@ -441,11 +489,19 @@ def detect(image_bytes: bytes, debug: bool = False) -> dict:
     detections = _run_yolo_fast(enhanced)
     timings["yolo_fast_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
-    best_plate = None
+    best_plate: str | None = None
     best_conf = 0.0
+    best_ocr_conf = 0.0
+    best_score = 0
+    best_candidates: list[dict] = []
 
     if detections:
-        best_plate, best_conf = _process_detections(detections, img, debug_info, timings)
+        det = _process_detections(detections, img, debug_info, timings)
+        best_plate     = det["placa"]
+        best_conf      = det["confianca_yolo"]
+        best_ocr_conf  = det["confianca_ocr"]
+        best_score     = det["score_ocr"]
+        best_candidates = det["candidatos"]
 
     # ── Fallback: YOLO com TTA quando placa não encontrada ────
     if not best_plate:
@@ -457,13 +513,21 @@ def detect(image_bytes: bytes, debug: bool = False) -> dict:
         timings["yolo_robust_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
         if detections_robust:
-            best_plate, best_conf = _process_detections(
-                detections_robust, img, debug_info, timings)
+            det = _process_detections(detections_robust, img, debug_info, timings)
+            best_plate      = det["placa"]
+            best_conf       = det["confianca_yolo"]
+            best_ocr_conf   = det["confianca_ocr"]
+            best_score      = det["score_ocr"]
+            best_candidates = det["candidatos"]
 
     timings["total_ms"] = round((time.perf_counter() - t_total) * 1000, 1)
 
     return {
-        "placa": best_plate,
-        "confianca": round(best_conf, 4),
-        "debug": debug_info,
+        "placa":          best_plate,
+        "confianca":      round(best_conf, 4),
+        "confianca_yolo": round(best_conf, 4),
+        "confianca_ocr":  round(best_ocr_conf, 4),
+        "score_ocr":      best_score,
+        "candidatos":     best_candidates,
+        "debug":          debug_info,
     }

@@ -33,6 +33,10 @@ export default function MonitorView({ backendUrl, onToast }) {
   const [cameraDevices, setCameraDevices] = useState([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
+  const VOTE_WINDOW = 5;
+  const CONFIRM_VOTES = 3;
+  const OCR_MIN_CONF = 0.70;
+
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const timerRef = useRef(null);
@@ -42,6 +46,7 @@ export default function MonitorView({ backendUrl, onToast }) {
   const lastFrameSampleRef = useRef(null);
   const stableFrameCountRef = useRef(0);
   const resetTimerRef = useRef(null);
+  const plateVoteBufferRef = useRef([]);
 
   useEffect(() => {
     if (videoRef.current && streamRef.current) {
@@ -100,6 +105,25 @@ export default function MonitorView({ backendUrl, onToast }) {
     lastProcessedPlateRef.current = null;
   }
 
+  function resetVoteBuffer() {
+    plateVoteBufferRef.current = [];
+  }
+
+  /**
+   * Adiciona um voto de placa ao buffer circular e retorna quantos votos
+   * a placa atual já tem. Troca de placa reseta o buffer automaticamente.
+   */
+  function addVote(placa) {
+    const buffer = plateVoteBufferRef.current;
+    const lastPlate = buffer.length > 0 ? buffer[buffer.length - 1] : null;
+    if (lastPlate !== null && lastPlate !== placa) {
+      plateVoteBufferRef.current = [placa];
+    } else {
+      plateVoteBufferRef.current = [...buffer, placa].slice(-VOTE_WINDOW);
+    }
+    return plateVoteBufferRef.current.filter((p) => p === placa).length;
+  }
+
   function clearMonitorState() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setDetection(null);
@@ -109,6 +133,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     setProcessingLabel("");
     resetProcessedPlate();
     resetStabilityTracking();
+    resetVoteBuffer();
   }
 
   function scheduleMonitorReset() {
@@ -125,6 +150,7 @@ export default function MonitorView({ backendUrl, onToast }) {
   function resetStabilityTracking() {
     lastFrameSampleRef.current = null;
     stableFrameCountRef.current = 0;
+    plateVoteBufferRef.current = [];
   }
 
   function isCurrentFrameStable() {
@@ -173,9 +199,9 @@ export default function MonitorView({ backendUrl, onToast }) {
     return stableFrameCountRef.current >= 1;
   }
 
-  async function openGate(detected, autoTriggered = false) {
+  async function openGate(detected, autoTriggered = false, ocrConf = null) {
     if (!detected) return;
-    await registerAccessOpen(detected.placa);
+    await registerAccessOpen(detected.placa, ocrConf);
     setDecision("liberado");
     scheduleMonitorReset();
     onToast(autoTriggered ? "Placa autorizada. Portao aberto automaticamente." : "Portao aberto pelo porteiro.", "ok");
@@ -186,7 +212,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     }
   }
 
-  async function processPlate(plate, autoOpen = true) {
+  async function processPlate(plate, autoOpen = true, ocrConf = null) {
     const clean = onlyPlate(plate);
     if (clean.length < 7 || detectInFlightRef.current) return;
     if (lastProcessedPlateRef.current === clean && detection?.placa === clean) return;
@@ -200,7 +226,7 @@ export default function MonitorView({ backendUrl, onToast }) {
       const nextDetection = await lookupAuthorizedPlate(clean);
       setDetection(nextDetection);
       if (autoOpen && nextDetection.status === "autorizado") {
-        await openGate(nextDetection, true);
+        await openGate(nextDetection, true, ocrConf);
       }
     } catch (error) {
       setDetection({ placa: clean, status: "nao-cadastrado", morador: null });
@@ -222,6 +248,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
     try {
       const result = await detectPlateFromBackend(backendUrl, file);
+
       if (!result.placa) {
         if (!fromWebcam) {
           setDetection({ placa: "---", status: "nao-detectado", morador: null });
@@ -231,20 +258,44 @@ export default function MonitorView({ backendUrl, onToast }) {
       }
 
       const clean = onlyPlate(result.placa);
-      setManualPlate(clean);
+      const ocrConf = result.confianca_ocr ?? 0;
+
       if (fromWebcam) {
+        // Rejeita leituras com confiança OCR real muito baixa.
+        // ocrConf === 0 indica backend sem o campo (compatibilidade) → aceita.
+        if (ocrConf > 0 && ocrConf < OCR_MIN_CONF) {
+          setProcessingLabel("Aguardando leitura mais clara...");
+          return;
+        }
+
+        const votes = addVote(clean);
+        if (votes < CONFIRM_VOTES) {
+          setProcessingLabel(`Confirmando placa ${clean} (${votes}/${CONFIRM_VOTES})`);
+          return;
+        }
+
+        // Votos suficientes: confirma a placa
+        resetVoteBuffer();
         if (previewUrl) URL.revokeObjectURL(previewUrl);
         setPreviewUrl(URL.createObjectURL(file));
+        setManualPlate(clean);
         stopWebcam();
+        await processPlate(clean, true, ocrConf);
+      } else {
+        setManualPlate(clean);
+        await processPlate(clean, true);
       }
-      await processPlate(clean, true);
     } catch (error) {
       if (!fromWebcam) {
         onToast(`Erro ao processar imagem: ${error.message}`);
       }
     } finally {
-      setProcessingLabel("");
       ocrInFlightRef.current = false;
+      if (!fromWebcam) {
+        setProcessingLabel("");
+      }
+      // Para webcam: processingLabel já foi definida dentro do try
+      // (progresso de votos ou "Validando..." via processPlate).
     }
   }
 
