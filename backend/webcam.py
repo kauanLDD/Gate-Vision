@@ -267,8 +267,8 @@ def main():
                         help="Tamanho de entrada do YOLO (padrao: 640)")
     parser.add_argument("--sample-every", type=int, default=5,
                         help="Processar 1 a cada N frames (padrao: 5)")
-    parser.add_argument("--confirm", type=int, default=3,
-                        help="Frames consecutivos para confirmar placa (padrao: 3)")
+    parser.add_argument("--confirm", type=int, default=2,
+                        help="Frames consecutivos para confirmar placa (padrao: 2)")
     parser.add_argument("--cooldown", type=float, default=10.0,
                         help="Segundos entre disparos da mesma placa (padrao: 10)")
     parser.add_argument("--show", action="store_true",
