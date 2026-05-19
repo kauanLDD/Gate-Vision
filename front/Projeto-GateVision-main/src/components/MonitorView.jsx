@@ -34,8 +34,8 @@ export default function MonitorView({ backendUrl, onToast }) {
   const [selectedCameraId, setSelectedCameraId] = useState("");
 
   const VOTE_WINDOW = 4;
-  const CONFIRM_VOTES = 2;
-  const OCR_MIN_CONF = 0.60;
+  const CONFIRM_VOTES = 1;
+  const OCR_MIN_CONF = 0.72;
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
