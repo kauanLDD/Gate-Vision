@@ -26,10 +26,15 @@ _ocr_reader = None
 _detect_conf = 0.25
 _detect_imgsz = 640
 
-_OCR_IGNORE = {"BRASIL", "BR", "MERCOSUL", "BRAZIL"}
+_OCR_IGNORE = {"BRASIL", "BR", "MERCOSUL", "BRAZIL", "MERC", "OSUL", "OSUR", "ERCO"}
 
 # Score mínimo para aceitar resultado e encerrar cedo o OCR
 _EARLY_STOP_SCORE = 180
+
+# Confiança mínima para aceitar parada antecipada após a 2ª variante.
+# Abaixo deste limiar, o pipeline continua até a 3ª variante (clahe) antes
+# de parar — garantindo uma segunda chance de leitura mais limpa.
+_EARLY_STOP_MIN_CONF = 0.80
 
 
 # ── Inicialização ──────────────────────────────────────────────
@@ -65,6 +70,14 @@ def _enhance_full_image(img: np.ndarray) -> np.ndarray:
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     l = clahe.apply(l)
     return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+
+# ── Nitidez (unsharp mask) ─────────────────────────────────────
+
+def _sharpen(img: np.ndarray, amount: float = 1.5) -> np.ndarray:
+    """Unsharp mask: subtrai versão borrada para realçar bordas dos caracteres."""
+    blurred = cv2.GaussianBlur(img, (0, 0), sigmaX=1.5)
+    return cv2.addWeighted(img, 1.0 + amount, blurred, -amount, 0)
 
 
 # ── Crop com margem ────────────────────────────────────────────
@@ -137,6 +150,9 @@ def _make_mercosul_ink(crop: np.ndarray) -> np.ndarray:
     clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
 
+    # Sharpening: realça bordas dos caracteres antes da binarização
+    gray = _sharpen(gray, amount=1.5)
+
     # Blur suave para fundir pequenas variações causadas pelas marcas
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
 
@@ -171,12 +187,20 @@ def _make_mercosul_ink(crop: np.ndarray) -> np.ndarray:
 # ── Variantes padrão de pré-processamento do crop ──────────────
 
 def _make_variants(crop: np.ndarray) -> dict[str, np.ndarray]:
-    color_up = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    # Correção 1: remove faixa BRASIL antes de qualquer OCR
+    roi = _crop_char_row(crop)
+    color_up = cv2.resize(roi, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    # Sharpening: realça bordas; gray/clahe/binary derivam daqui e herdam o efeito
+    color_up = _sharpen(color_up, amount=1.2)
     gray = cv2.cvtColor(color_up, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     clahe_img = clahe.apply(gray)
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Correção 2: threshold adaptativo funciona melhor com iluminação não-uniforme
+    binary = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, 31, 10,
+    )
     return {"color": color_up, "clahe": clahe_img, "binary": binary}
 
 
@@ -238,6 +262,24 @@ def _correct_mercosul(text: str) -> str:
     return "".join(chars[:7])
 
 
+def _confidence_for_corrected(original: str, corrected: str, raw_conf: float) -> float:
+    """Ajusta a confiança quando a correção Mercosul produz um formato válido.
+
+    O EasyOCR reporta a confiança do texto bruto (p.ex. "AQN8408"), não do
+    texto corrigido ("AQN8A08"). A correção é determinística e orientada pelo
+    formato da placa, por isso a confiança final deve ser maior do que a do
+    segmento mal-lido — especialmente quando poucos caracteres precisaram de
+    correção.
+    """
+    if not _MERCOSUL_RE.match(corrected):
+        return raw_conf
+    n_fixed = sum(a != b for a, b in zip(original, corrected))
+    # Base 0.88 para 0 correções; −0.10 por cada correção necessária.
+    # O resultado é limitado superiormente a 0.92 e nunca cai abaixo de raw_conf.
+    base = 0.88 - n_fixed * 0.10
+    return max(raw_conf, min(base, 0.92))
+
+
 def _score(text: str) -> int:
     s = 0
     if len(text) == 7:
@@ -267,27 +309,23 @@ def _extract_candidates(ocr_hits: list[tuple[str, float]]) -> list[tuple[str, in
     for text, conf in ocr_hits:
         if 4 <= len(text) <= 10:
             corrected = _correct_mercosul(text)
+            adj_conf = _confidence_for_corrected(text, corrected, conf)
             sc = _score(corrected) + int(conf * 60)
             if corrected not in candidates or sc > candidates[corrected]:
                 candidates[corrected] = sc
-                ocr_confs[corrected] = conf
+                ocr_confs[corrected] = adj_conf
 
-    conf_map: list[tuple[str, float]] = []
+    # Correção 3: janela deslizante apenas dentro de cada segmento OCR,
+    # sem cruzar fronteiras entre palavras distintas.
     for text, conf in ocr_hits:
-        for ch in text:
-            conf_map.append((ch, conf))
-
-    full = "".join(ch for ch, _ in conf_map)
-    for start in range(max(0, len(full) - 6)):
-        window = full[start:start + 7]
-        if len(window) < 7:
-            break
-        avg_conf = sum(c for _, c in conf_map[start:start + 7]) / 7
-        corrected = _correct_mercosul(window)
-        sc = _score(corrected) + int(avg_conf * 30)
-        if corrected not in candidates or sc > candidates[corrected]:
-            candidates[corrected] = sc
-            ocr_confs[corrected] = avg_conf
+        for start in range(len(text) - 6):
+            window = text[start:start + 7]
+            corrected = _correct_mercosul(window)
+            adj_conf = _confidence_for_corrected(window, corrected, conf)
+            sc = _score(corrected) + int(conf * 30)
+            if corrected not in candidates or sc > candidates[corrected]:
+                candidates[corrected] = sc
+                ocr_confs[corrected] = adj_conf
 
     return sorted(
         [(text, score, round(ocr_confs.get(text, 0.0), 4))
@@ -311,41 +349,49 @@ def _ocr_crop_fast(crop: np.ndarray, debug_variants: dict | None = None
 
     Retorna (all_hits, found_early).
     """
-    variants_standard = _make_variants(crop)
-    ink_img = _make_mercosul_ink(crop)
-
-    all_variants = {
-        "mercosul_ink": ink_img,
-        **variants_standard,
-    }
+    # Correção 4: variantes construídas sob demanda; standard_variants só é
+    # criado quando a primeira variante padrão (color) for necessária.
     order = ["mercosul_ink", "color", "clahe", "binary"]
-
+    standard_variants: dict[str, np.ndarray] | None = None
     all_hits: list[tuple[str, float]] = []
     found_early = False
 
     for idx, vname in enumerate(order):
-        variant = all_variants[vname]
+        if vname == "mercosul_ink":
+            variant = _make_mercosul_ink(crop)
+        else:
+            if standard_variants is None:
+                standard_variants = _make_variants(crop)
+            variant = standard_variants[vname]
+
         hits = _run_ocr(variant)
         all_hits.extend(hits)
 
         if debug_variants is not None:
             debug_variants[vname] = {"img": variant, "hits": hits}
 
-        # Parada antecipada só após a 2ª variante: garante que mercosul_ink
-        # e color sempre rodam juntos antes de decidir parar.
+        # Parada antecipada: requer score >= _EARLY_STOP_SCORE E
+        #   (a) ao menos 3 variantes já rodaram (idx >= 2), OU
+        #   (b) a confiança do melhor candidato já é alta (>= _EARLY_STOP_MIN_CONF).
+        # Isso garante que leituras corrigidas com confiança borderline (~0.78)
+        # rodem a variante clahe antes de encerrar, aumentando a chance de um
+        # leitura mais limpa e com confiança mais alta.
         if idx >= 1:
             candidates = _extract_candidates(all_hits)
             if candidates and candidates[0][1] >= _EARLY_STOP_SCORE:
-                found_early = True
-                if debug_variants is not None:
-                    for remaining in order:
-                        if remaining not in debug_variants:
-                            debug_variants[remaining] = {
-                                "img": all_variants[remaining],
-                                "hits": [],
-                                "skipped": True,
-                            }
-                break
+                top_conf = candidates[0][2]
+                if idx >= 2 or top_conf >= _EARLY_STOP_MIN_CONF:
+                    found_early = True
+                    if debug_variants is not None:
+                        sv = standard_variants or {}
+                        for remaining in order:
+                            if remaining not in debug_variants:
+                                debug_variants[remaining] = {
+                                    "img": sv.get(remaining),
+                                    "hits": [],
+                                    "skipped": True,
+                                }
+                    break
 
     return all_hits, found_early
 
