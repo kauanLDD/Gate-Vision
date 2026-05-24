@@ -51,7 +51,7 @@ export async function fetchDashboardData(filterDays) {
 
 export async function fetchResidents() {
   const [pessoasRes, veiculosRes, vinculosRes] = await Promise.all([
-    db.from("pessoas").select("id, nome, cpf"),
+    db.from("pessoas").select("id, nome, cpf").order("id", { ascending: false }),
     db.from("veiculos").select("id, placa, modelo, pessoa_id"),
     db.from("vinculos").select("pessoa_id, unidades(identificacao, blocos(nome))")
   ]);
@@ -143,12 +143,16 @@ export async function saveResident(payload) {
 }
 
 export async function deleteResident(personId) {
-  const [vinculoRes, vehicleRes] = await Promise.all([
+  const [vinculoRes, vehicleRes, authRes, userRes] = await Promise.all([
     db.from("vinculos").delete().eq("pessoa_id", personId),
-    db.from("veiculos").delete().eq("pessoa_id", personId)
+    db.from("veiculos").delete().eq("pessoa_id", personId),
+    db.from("autorizacoes_temporarias").update({ autorizado_por: null }).eq("autorizado_por", personId),
+    db.from("usuarios_sistema").delete().eq("pessoa_id", personId)
   ]);
   if (vinculoRes.error) throw vinculoRes.error;
   if (vehicleRes.error) throw vehicleRes.error;
+  if (authRes.error) throw authRes.error;
+  if (userRes.error) throw userRes.error;
 
   const personRes = await db.from("pessoas").delete().eq("id", personId);
   if (personRes.error) throw personRes.error;

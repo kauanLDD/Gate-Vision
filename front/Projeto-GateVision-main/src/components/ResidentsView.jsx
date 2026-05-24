@@ -35,7 +35,7 @@ function ResidentForm({ initialData, onSubmit, onClose, loading }) {
       <div><label className="login-sub">Apartamento</label><input required className="input" value={form.apartamento} onChange={(event) => updateField("apartamento", event.target.value)} /></div>
       <div><label className="login-sub">Torre</label><input required className="input" value={form.torre} onChange={(event) => updateField("torre", event.target.value.toUpperCase())} /></div>
       <div><label className="login-sub">Placa</label><input required className="input mono" maxLength={7} value={form.placa} onChange={(event) => updateField("placa", onlyPlate(event.target.value))} /></div>
-      <div><label className="login-sub">Veiculo</label><input className="input" value={form.veiculo} onChange={(event) => updateField("veiculo", event.target.value)} /></div>
+      <div><label className="login-sub">Veículo</label><input className="input" value={form.veiculo} onChange={(event) => updateField("veiculo", event.target.value)} /></div>
       <div className="form-actions modal-actions">
         <button className="btn primary" type="submit" disabled={loading}>{loading ? "Salvando..." : "Salvar Cadastro"}</button>
         <button className="btn" type="button" onClick={onClose}>Cancelar</button>
@@ -51,7 +51,7 @@ function ResidentsTable({ residents, readOnly, onDelete, onEdit }) {
     <table>
       <thead>
         <tr>
-          <th>Nome</th><th>CPF</th><th>Apto</th><th>Torre</th><th>Placa</th><th>Veiculo</th><th>Vaga</th>{!readOnly ? <th>Acoes</th> : null}
+          <th>Nome</th><th>CPF</th><th>Apto</th><th>Torre</th><th>Placa</th><th>Veículo</th><th>Vaga</th>{!readOnly ? <th>Ações</th> : null}
         </tr>
       </thead>
       <tbody>
@@ -103,11 +103,11 @@ export default function ResidentsView({ readOnly = false, onToast }) {
 
   async function handleSave(form) {
     if (form.cpf.replace(/\D/g, "").length !== 11) {
-      onToast("CPF deve ter 11 digitos.");
+      onToast("CPF deve ter 11 dígitos.");
       return;
     }
     if (onlyPlate(form.placa).length < 7) {
-      onToast("Placa invalida (minimo 7 caracteres).");
+      onToast("Placa inválida (mínimo 7 caracteres).");
       return;
     }
 
@@ -167,8 +167,8 @@ export default function ResidentsView({ readOnly = false, onToast }) {
       <div className="panel-header">
         <div>
           <div className="eyebrow">{readOnly ? "Consulta" : "Cadastro residencial"}</div>
-          <h2 className="section-title">{readOnly ? "Base de clientes" : "Gestao de moradores e veiculos"}</h2>
-          <p className="section-sub">{readOnly ? "Visualizacao em modo leitura para conferencia rapida dos moradores e placas vinculadas." : "Cadastre moradores, associe placas e mantenha a base de acesso sempre atualizada."}</p>
+          <h2 className="section-title">{readOnly ? "Base de clientes" : "Gestão de moradores e veículos"}</h2>
+          <p className="section-sub">{readOnly ? "Visualização em modo leitura para conferência rápida dos moradores e placas vinculadas." : "Cadastre moradores, associe placas e mantenha a base de acesso sempre atualizada."}</p>
         </div>
         {!readOnly ? (
           <div className="panel-actions">
@@ -184,7 +184,7 @@ export default function ResidentsView({ readOnly = false, onToast }) {
         </div>
       </div>
 
-      <Modal open={open} title={editingResident ? "Editar Cliente / Veiculo" : "Novo Cliente / Veiculo"} onClose={handleCloseModal}>
+      <Modal open={open} title={editingResident ? "Editar Cliente / Veículo" : "Novo Cliente / Veículo"} onClose={handleCloseModal}>
         <ResidentForm initialData={editingResident} onSubmit={handleSave} onClose={handleCloseModal} loading={saving} />
       </Modal>
     </div>

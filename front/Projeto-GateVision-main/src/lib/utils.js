@@ -40,7 +40,8 @@ export function getFilterDateISO(days) {
 export function defaultDatetime(offsetHours = 0) {
   const date = new Date();
   date.setHours(date.getHours() + offsetHours);
-  return date.toISOString().slice(0, 16);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 export function groupLogsByDay(logs, days) {
@@ -98,19 +99,19 @@ export function clearSession() {
 export function navItemsByRole(role) {
   if (role === "admin") {
     return [
-      { id: "dashboard", label: "Visao Geral" },
+      { id: "dashboard", label: "Visão Geral" },
       { id: "monitor", label: "Monitor de Placas" },
-      { id: "cadastro", label: "Cadastro de Clientes e Placas" },
-      { id: "cameras", label: "Cameras" },
-      { id: "autorizacoes", label: "Autorizacoes Temporarias" },
-      { id: "logs", label: "Historico de Acessos" }
+      { id: "cadastro", label: "Clientes" },
+      { id: "cameras", label: "Câmeras" },
+      { id: "autorizacoes", label: "Autorizações Temporárias" },
+      { id: "logs", label: "Histórico de Acessos" }
     ];
   }
 
   return [
     { id: "monitor", label: "Monitor de Placas" },
     { id: "residentes", label: "Cadastro (somente leitura)" },
-    { id: "logs", label: "Historico de Acessos" }
+    { id: "logs", label: "Histórico de Acessos" }
   ];
 }
 
@@ -124,6 +125,7 @@ export function buildStatusIllustration(type) {
         <path d='M105 200l28 28 60-70' stroke='white' stroke-width='18' fill='none' stroke-linecap='round' stroke-linejoin='round'/>
         <text x='250' y='180' font-family='Arial, sans-serif' font-size='44' fill='white' font-weight='700'>ACESSO LIBERADO</text>
         <text x='250' y='225' font-family='Arial, sans-serif' font-size='26' fill='rgba(255,255,255,0.92)'>Morador identificado no cadastro</text>
+
       </svg>
     `)}`;
   }
@@ -135,7 +137,7 @@ export function buildStatusIllustration(type) {
       <circle cx='140' cy='200' r='74' fill='rgba(255,255,255,0.15)'/>
       <path d='M100 160l80 80M180 160l-80 80' stroke='white' stroke-width='16' stroke-linecap='round'/>
       <text x='250' y='180' font-family='Arial, sans-serif' font-size='44' fill='white' font-weight='700'>ACESSO NEGADO</text>
-      <text x='250' y='225' font-family='Arial, sans-serif' font-size='26' fill='rgba(255,255,255,0.92)'>Placa nao encontrada no cadastro</text>
+      <text x='250' y='225' font-family='Arial, sans-serif' font-size='26' fill='rgba(255,255,255,0.92)'>Placa não encontrada no cadastro</text>
     </svg>
   `)}`;
 }

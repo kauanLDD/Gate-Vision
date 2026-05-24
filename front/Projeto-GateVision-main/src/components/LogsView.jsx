@@ -10,7 +10,7 @@ export default function LogsView({ onToast }) {
     fetchLogs()
       .then((data) => { if (alive) setLogs(data); })
       .catch((error) => {
-        onToast(`Erro ao carregar historico: ${error.message}`);
+        onToast(`Erro ao carregar histórico: ${error.message}`);
         if (alive) setLogs([]);
       });
     return () => { alive = false; };
@@ -21,13 +21,13 @@ export default function LogsView({ onToast }) {
       <div className="panel-header">
         <div>
           <div className="eyebrow">Rastreabilidade</div>
-          <h2 className="section-title">Historico de acessos</h2>
-          <p className="section-sub">Ate 200 registros recentes para auditoria da entrada, identificacao da camera e decisao tomada.</p>
+          <h2 className="section-title">Histórico de acessos</h2>
+          <p className="section-sub">Até 200 registros recentes para auditoria da entrada, identificação da câmera e decisão tomada.</p>
         </div>
       </div>
 
       <div className="card">
-        <div className="card-head">Historico de acessos</div>
+        <div className="card-head">Histórico de acessos</div>
         <div className="card-body table-wrap">
           {logs === null ? <div className="empty">Carregando...</div> : null}
           {logs && logs.length ? (

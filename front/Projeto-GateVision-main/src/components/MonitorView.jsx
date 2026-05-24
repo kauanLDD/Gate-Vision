@@ -9,11 +9,11 @@ import {
 import { buildStatusIllustration, formatCPF, onlyPlate } from "../lib/utils";
 
 function statusChip(detection, decision) {
-  if (!detection) return <span className="chip warn">Aguardando identificacao</span>;
+  if (!detection) return <span className="chip warn">Aguardando identificação</span>;
   if (decision === "liberado") return <span className="chip ok">Acesso liberado pelo porteiro</span>;
   if (decision === "negado") return <span className="chip err">Acesso negado pelo porteiro</span>;
-  if (detection.status === "autorizado") return <span className="chip warn">Placa cadastrada (aguardando acao)</span>;
-  return <span className="chip warn">Placa nao cadastrada (aguardando acao)</span>;
+  if (detection.status === "autorizado") return <span className="chip warn">Placa cadastrada (aguardando ação)</span>;
+  return <span className="chip warn">Placa não cadastrada (aguardando ação)</span>;
 }
 
 function statusImage(detection, decision) {
@@ -106,7 +106,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
       return cameras;
     } catch (error) {
-      console.warn("Falha ao listar cameras:", error);
+      console.warn("Falha ao listar câmeras:", error);
       return [];
     }
   }
@@ -154,7 +154,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     resetTimerRef.current = window.setTimeout(() => {
       clearMonitorState();
       resetTimerRef.current = null;
-    }, 4000);
+    }, 20000);
   }
 
   function resetStabilityTracking() {
@@ -214,7 +214,7 @@ export default function MonitorView({ backendUrl, onToast }) {
     await registerAccessOpen(detected.placa, ocrConf);
     setDecision("liberado");
     scheduleMonitorReset();
-    onToast(autoTriggered ? "Placa autorizada. Portao aberto automaticamente." : "Portao aberto pelo porteiro.", "ok");
+    onToast(autoTriggered ? "Placa autorizada. Portão aberto automaticamente." : "Portão aberto pelo porteiro.", "ok");
     try {
       await triggerGate(backendUrl);
     } catch (error) {
@@ -310,7 +310,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
   async function startWebcam(cameraId = selectedCameraId) {
     if (!navigator.mediaDevices?.getUserMedia) {
-      onToast("Seu navegador nao suporta acesso a webcam.");
+      onToast("Seu navegador não suporta acesso à webcam.");
       return;
     }
 
@@ -363,7 +363,7 @@ export default function MonitorView({ backendUrl, onToast }) {
       }
 
       if (selectedCameraUnavailable && activeCameraId && cameraId && activeCameraId !== cameraId) {
-        onToast("A camera USB selecionada nao abriu. O navegador usou outra camera disponivel.");
+        onToast("A câmera USB selecionada não abriu. O navegador usou outra câmera disponível.");
       }
 
       if (timerRef.current) clearInterval(timerRef.current);
@@ -378,11 +378,11 @@ export default function MonitorView({ backendUrl, onToast }) {
       autoStartAttemptedRef.current = false;
       setProcessingLabel("");
       const message = error.name === "NotAllowedError"
-        ? "Permissao de camera negada. Permita o acesso no navegador."
+        ? "Permissão de câmera negada. Permita o acesso no navegador."
         : error.name === "NotFoundError"
-          ? "Nenhuma camera encontrada no dispositivo."
+          ? "Nenhuma câmera encontrada no dispositivo."
           : error.name === "OverconstrainedError"
-            ? "A camera selecionada nao esta disponivel no momento."
+            ? "A câmera selecionada não está disponível no momento."
           : `Erro ao acessar a webcam: ${error.message}`;
       onToast(message);
     }
@@ -409,7 +409,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
   async function captureAndDetect(silent = false) {
     if (!videoRef.current || !streamRef.current) {
-      if (!silent) onToast("Webcam nao esta ativa.");
+      if (!silent) onToast("Webcam não está ativa.");
       return;
     }
     if (detectInFlightRef.current || ocrInFlightRef.current) return;
@@ -446,7 +446,7 @@ export default function MonitorView({ backendUrl, onToast }) {
       scheduleMonitorReset();
       onToast("Acesso negado registrado.", "ok");
     } catch (error) {
-      onToast(`Erro ao registrar negacao: ${error.message}`);
+      onToast(`Erro ao registrar negação: ${error.message}`);
     }
   }
 
@@ -486,13 +486,13 @@ export default function MonitorView({ backendUrl, onToast }) {
         <div className="hero-grid">
           <div>
             <div className="eyebrow">Monitor de leitura</div>
-            <h2 className="section-title">Triagem de veiculos na entrada principal</h2>
+            <h2 className="section-title">Triagem de veículos na entrada principal</h2>
             <p className="section-sub">Envie imagem, use a webcam ou digite a placa manualmente para validar a autorizacao e decidir a abertura do portao.</p>
             <div className="hero-meta">{currentChip}</div>
           </div>
           <div className="hero-note">
             <div>
-              <div className="eyebrow">Ultima placa</div>
+              <div className="eyebrow">Última placa</div>
               <strong className="mono">{detection ? detection.placa : "---"}</strong>
             </div>
             <p className="section-sub">{detection?.morador ? detection.morador.nome : "Aguardando identificacao para exibir dados do morador."}</p>
@@ -521,7 +521,7 @@ export default function MonitorView({ backendUrl, onToast }) {
 
               <div className="monitor-toolbar" style={{ marginTop: 10 }}>
                 <select className="input" value={selectedCameraId} onChange={handleCameraChange} disabled={!cameraDevices.length}>
-                  <option value="">{cameraDevices.length ? "Selecione uma camera" : "Nenhuma camera encontrada"}</option>
+                  <option value="">{cameraDevices.length ? "Selecione uma câmera" : "Nenhuma câmera encontrada"}</option>
                   {cameraDevices.map((camera) => (
                     <option key={camera.id} value={camera.id}>{camera.label}</option>
                   ))}
@@ -553,16 +553,6 @@ export default function MonitorView({ backendUrl, onToast }) {
             </div>
           </div>
 
-          <div className="split-card">
-            <div className="metric-mini">
-              <span>Status atual</span>
-              <strong>{decision ? decision.toUpperCase() : "EM ANALISE"}</strong>
-            </div>
-            <div className="metric-mini">
-              <span>Origem</span>
-              <strong>{detection ? "PLACA DETECTADA" : "AGUARDANDO"}</strong>
-            </div>
-          </div>
         </div>
       </div>
     </div>

@@ -54,7 +54,7 @@ export default function App() {
 
   async function handleLogin(login, password) {
     const user = await loginUser(login, password);
-    if (!user) throw new Error("Usuario ou senha invalidos.");
+    if (!user) throw new Error("Usuário ou senha inválidos.");
     setSession(user);
     setCurrentUser(user);
   }
