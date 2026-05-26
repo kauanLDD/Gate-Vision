@@ -1112,3 +1112,110 @@ html[data-theme="light"] .modal-card {
   .modal-head,
   .modal-body { padding: 16px; }
 }
+
+/* ── Multi-camera monitor grid ───────────────────────────────────── */
+
+.multi-monitor-grid {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+.multi-monitor-grid[data-count="1"] {
+  grid-template-columns: 1fr;
+}
+
+.multi-monitor-grid[data-count="2"],
+.multi-monitor-grid[data-count="3"],
+.multi-monitor-grid[data-count="4"] {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* ── Camera panel card ───────────────────────────────────────────── */
+
+.camera-panel {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.camera-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.camera-panel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.camera-panel-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.camera-panel-chip {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.camera-panel-remove {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.camera-panel-remove:hover {
+  color: var(--red);
+  border-color: var(--red);
+  background: var(--red-soft);
+}
+
+.camera-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+/* Compact camera height inside panels */
+.camera-panel .camera {
+  height: 220px;
+}
+
+/* Single-panel keeps the original taller view */
+.multi-monitor-grid[data-count="1"] .camera-panel .camera {
+  height: 300px;
+}
+
+.monitor-add-form {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+
+@media (max-width: 1080px) {
+  .multi-monitor-grid[data-count="2"],
+  .multi-monitor-grid[data-count="3"],
+  .multi-monitor-grid[data-count="4"] {
+    grid-template-columns: 1fr;
+  }
+}
