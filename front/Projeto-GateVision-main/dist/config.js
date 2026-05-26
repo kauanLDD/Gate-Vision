@@ -1,0 +1,1 @@
+window.GATEVISION_BACKEND_URL = "";
