@@ -7,6 +7,7 @@ import { loginUser } from "./lib/api";
 import { clearSession, getSession, setSession } from "./lib/utils";
 
 const DashboardView = lazy(() => import("./components/DashboardView"));
+const GatekeepersView = lazy(() => import("./components/GatekeepersView"));
 const ResidentsView = lazy(() => import("./components/ResidentsView"));
 const CamerasView = lazy(() => import("./components/CamerasView"));
 const AuthorizationsView = lazy(() => import("./components/AuthorizationsView"));
@@ -94,6 +95,7 @@ export default function App() {
 
   let content = null;
   if (currentView === "dashboard") content = <DashboardView filterDays={dashboardFilterDays} onFilterChange={setDashboardFilterDays} onError={pushToast} />;
+  else if (currentView === "porteiros" && currentUser.role === "admin") content = <GatekeepersView onToast={pushToast} />;
   else if (currentView === "cadastro") content = <ResidentsView onToast={pushToast} />;
   else if (currentView === "cameras") content = <CamerasView onToast={pushToast} />;
   else if (currentView === "autorizacoes") content = <AuthorizationsView onToast={pushToast} />;

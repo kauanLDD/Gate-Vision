@@ -14,6 +14,7 @@ export default function AppShell({
   const items = navItemsByRole(currentUser.role);
   const titleMap = {
     dashboard: "Visão Geral",
+    porteiros: "Porteiros",
     cadastro: "Clientes",
     cameras: "Câmeras",
     autorizacoes: "Autorizações Temporárias",
