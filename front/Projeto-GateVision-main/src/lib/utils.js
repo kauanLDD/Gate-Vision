@@ -100,6 +100,7 @@ export function navItemsByRole(role) {
   if (role === "admin") {
     return [
       { id: "dashboard", label: "Visão Geral" },
+      { id: "porteiros", label: "Porteiros" },
       { id: "monitor", label: "Monitor de Placas" },
       { id: "cadastro", label: "Clientes" },
       { id: "cameras", label: "Câmeras" },

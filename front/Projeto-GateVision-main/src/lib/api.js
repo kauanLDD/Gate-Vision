@@ -1,6 +1,69 @@
 import { db, ESTAB_ID } from "./config";
 import { formatDateTime, getFilterDateISO, logStatus } from "./utils";
 
+function normalizeText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function normalizeLogin(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function onlyDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isMissingColumnError(error, column) {
+  const text = `${error?.code || ""} ${error?.message || ""} ${error?.details || ""}`;
+  return text.includes("PGRST204") || text.toLowerCase().includes(column.toLowerCase());
+}
+
+function mapGatekeeper(row) {
+  return {
+    id: row.id,
+    pessoa_id: row.pessoa_id || null,
+    login: row.login,
+    ativo: row.ativo !== false,
+    nome: row.pessoas?.nome || row.login,
+    cpf: row.pessoas?.cpf || "",
+    perfil: row.perfis_acesso?.descricao || "porteiro"
+  };
+}
+
+async function fetchGatekeeperProfileId() {
+  const { data, error } = await db
+    .from("perfis_acesso")
+    .select("id, descricao")
+    .order("id", { ascending: true });
+
+  if (error) throw error;
+
+  const profile = (data || []).find((item) => normalizeText(item.descricao).includes("porteiro"));
+  if (!profile) throw new Error("Perfil de acesso 'porteiro' nao encontrado.");
+  return profile.id;
+}
+
+async function insertSystemUserWithProfile(payload, profileId) {
+  const candidateColumns = ["perfil_acesso_id", "perfil_id", "perfilacesso_id"];
+  let lastError = null;
+
+  for (const column of candidateColumns) {
+    const { error } = await db
+      .from("usuarios_sistema")
+      .insert({ ...payload, [column]: profileId });
+
+    if (!error) return;
+
+    lastError = error;
+    if (!isMissingColumnError(error, column)) break;
+  }
+
+  throw lastError || new Error("Nao foi possivel criar o usuario do porteiro.");
+}
+
 export async function loginUser(login, password) {
   const { data, error } = await db
     .from("usuarios_sistema")
@@ -17,8 +80,107 @@ export async function loginUser(login, password) {
     id: data.id,
     username: data.login,
     nome: data.pessoas?.nome || data.login,
-    role: data.perfis_acesso?.descricao || "porteiro"
+    role: normalizeText(data.perfis_acesso?.descricao).includes("admin") ? "admin" : "porteiro"
   };
+}
+
+export async function fetchGatekeepers() {
+  const { data, error } = await db
+    .from("usuarios_sistema")
+    .select("*, pessoas(nome, cpf), perfis_acesso(id, descricao)")
+    .order("id", { ascending: false });
+
+  if (error) throw error;
+
+  return (data || [])
+    .filter((item) => normalizeText(item.perfis_acesso?.descricao).includes("porteiro"))
+    .map(mapGatekeeper);
+}
+
+export async function saveGatekeeper(payload) {
+  const login = normalizeLogin(payload.login);
+  const cpf = onlyDigits(payload.cpf);
+
+  const [loginRes, cpfRes, profileId] = await Promise.all([
+    db.from("usuarios_sistema").select("id").eq("login", login).maybeSingle(),
+    db.from("pessoas").select("id").eq("cpf", cpf).maybeSingle(),
+    fetchGatekeeperProfileId()
+  ]);
+
+  if (loginRes.error) throw loginRes.error;
+  if (cpfRes.error) throw cpfRes.error;
+  if (loginRes.data) throw new Error("Login ja cadastrado.");
+  if (cpfRes.data) throw new Error("CPF ja cadastrado.");
+
+  const personRes = await db
+    .from("pessoas")
+    .insert({ nome: payload.nome.trim(), cpf })
+    .select("id")
+    .single();
+
+  if (personRes.error) throw personRes.error;
+
+  try {
+    await insertSystemUserWithProfile({
+      pessoa_id: personRes.data.id,
+      login,
+      senha_hash: payload.senha,
+      ativo: true
+    }, profileId);
+  } catch (error) {
+    await db.from("pessoas").delete().eq("id", personRes.data.id);
+    throw error;
+  }
+}
+
+export async function updateGatekeeper(userId, personId, payload) {
+  const login = normalizeLogin(payload.login);
+  const cpf = onlyDigits(payload.cpf);
+
+  const [loginRes, cpfRes] = await Promise.all([
+    db.from("usuarios_sistema").select("id").eq("login", login).neq("id", userId).maybeSingle(),
+    personId
+      ? db.from("pessoas").select("id").eq("cpf", cpf).neq("id", personId).maybeSingle()
+      : db.from("pessoas").select("id").eq("cpf", cpf).maybeSingle()
+  ]);
+
+  if (loginRes.error) throw loginRes.error;
+  if (cpfRes.error) throw cpfRes.error;
+  if (loginRes.data) throw new Error("Login ja cadastrado.");
+  if (cpfRes.data) throw new Error("CPF ja cadastrado.");
+
+  let resolvedPersonId = personId;
+  const userPatch = {
+    login,
+    ativo: payload.ativo
+  };
+
+  if (payload.senha) userPatch.senha_hash = payload.senha;
+
+  if (resolvedPersonId) {
+    const personRes = await db
+      .from("pessoas")
+      .update({ nome: payload.nome.trim(), cpf })
+      .eq("id", resolvedPersonId);
+    if (personRes.error) throw personRes.error;
+  } else {
+    const personRes = await db
+      .from("pessoas")
+      .insert({ nome: payload.nome.trim(), cpf })
+      .select("id")
+      .single();
+    if (personRes.error) throw personRes.error;
+    resolvedPersonId = personRes.data.id;
+    userPatch.pessoa_id = resolvedPersonId;
+  }
+
+  const userRes = await db.from("usuarios_sistema").update(userPatch).eq("id", userId);
+  if (userRes.error) throw userRes.error;
+}
+
+export async function setGatekeeperActive(userId, ativo) {
+  const { error } = await db.from("usuarios_sistema").update({ ativo }).eq("id", userId);
+  if (error) throw error;
 }
 
 export async function fetchDashboardData(filterDays) {
