@@ -123,6 +123,7 @@ export async function saveGatekeeper(payload) {
   try {
     await insertSystemUserWithProfile({
       pessoa_id: personRes.data.id,
+      estabelecimento_id: ESTAB_ID,
       login,
       senha_hash: payload.senha,
       ativo: true
